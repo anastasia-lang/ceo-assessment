@@ -9,42 +9,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const sessions = getAllSessions();
+  const sessions = await getAllSessions();
   const rows: string[] = [];
 
   rows.push([
-    'Candidate Name',
-    'Email',
-    'Started At',
-    'Status',
-    'Stage 1 Time',
-    'Stage 2 Time',
-    'Stage 3 Time',
-    'Stage',
-    'Question Key',
-    'Response Text',
-    'Response JSON',
+    'Candidate Name', 'Email', 'Started At', 'Status',
+    'Stage 1 Time', 'Stage 2 Time', 'Stage 3 Time',
+    'Stage', 'Question Key', 'Response Text', 'Response JSON',
   ].map(h => `"${h}"`).join(','));
+
+  const calcTime = (start: unknown, end: unknown) => {
+    if (!start || !end) return '';
+    const ms = new Date(end as string).getTime() - new Date(start as string).getTime();
+    return `${Math.floor(ms / 60000)}m`;
+  };
 
   for (const session of sessions) {
     const sid = session.id as string;
-    let responses = getFinalResponses(sid);
-    if (responses.length === 0) {
-      responses = getLatestResponses(sid);
-    }
-
-    const calcTime = (start: unknown, end: unknown) => {
-      if (!start || !end) return '';
-      const ms = new Date(end as string).getTime() - new Date(start as string).getTime();
-      return `${Math.floor(ms / 60000)}m`;
-    };
+    let responses = await getFinalResponses(sid);
+    if (responses.length === 0) responses = await getLatestResponses(sid);
 
     if (responses.length === 0) {
       rows.push([
-        session.candidate_name,
-        session.candidate_email,
-        session.started_at,
-        session.status,
+        session.candidate_name, session.candidate_email, session.started_at, session.status,
         calcTime(session.stage1_started_at, session.stage1_submitted_at),
         calcTime(session.stage2_started_at, session.stage2_submitted_at),
         calcTime(session.stage3_started_at, session.stage3_submitted_at),
@@ -53,25 +40,17 @@ export async function GET(request: NextRequest) {
     } else {
       for (const resp of responses) {
         rows.push([
-          session.candidate_name,
-          session.candidate_email,
-          session.started_at,
-          session.status,
+          session.candidate_name, session.candidate_email, session.started_at, session.status,
           calcTime(session.stage1_started_at, session.stage1_submitted_at),
           calcTime(session.stage2_started_at, session.stage2_submitted_at),
           calcTime(session.stage3_started_at, session.stage3_submitted_at),
-          resp.stage,
-          resp.question_key,
-          resp.response_text || '',
-          resp.response_json || '',
+          resp.stage, resp.question_key, resp.response_text || '', resp.response_json || '',
         ].map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
       }
     }
   }
 
-  const csv = rows.join('\n');
-
-  return new NextResponse(csv, {
+  return new NextResponse(rows.join('\n'), {
     headers: {
       'Content-Type': 'text/csv',
       'Content-Disposition': 'attachment; filename="assessment-export.csv"',

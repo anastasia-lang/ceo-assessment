@@ -5,14 +5,11 @@ import { createSession, getSession } from '@/lib/db';
 export async function POST(request: NextRequest) {
   try {
     const { name, email } = await request.json();
-
     if (!name || !email) {
       return NextResponse.json({ error: 'Name and email are required' }, { status: 400 });
     }
-
     const id = uuidv4();
-    createSession(id, name, email);
-
+    await createSession(id, name, email);
     return NextResponse.json({ sessionId: id });
   } catch (error) {
     console.error('Session creation error:', error);
@@ -25,11 +22,9 @@ export async function GET(request: NextRequest) {
   if (!sessionId) {
     return NextResponse.json({ error: 'sessionId required' }, { status: 400 });
   }
-
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
-
   return NextResponse.json(session);
 }

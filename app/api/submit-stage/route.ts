@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const session = getSession(sessionId);
+    const session = await getSession(sessionId);
     if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
 
     if (stageResponses && Array.isArray(stageResponses)) {
       for (const resp of stageResponses) {
-        saveResponse(
+        await saveResponse(
           sessionId,
           stage,
           resp.questionKey,
@@ -34,13 +34,13 @@ export async function POST(request: NextRequest) {
         );
       }
     } else {
-      const existing = getResponses(sessionId, stage);
+      const existing = await getResponses(sessionId, stage);
       const seen = new Set<string>();
       for (const resp of existing) {
         const key = resp.question_key as string;
         if (!seen.has(key)) {
           seen.add(key);
-          saveResponse(
+          await saveResponse(
             sessionId,
             stage,
             key,
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
       updates.status = 'completed';
     }
 
-    updateSession(sessionId, updates);
+    await updateSession(sessionId, updates);
 
     return NextResponse.json({
       success: true,

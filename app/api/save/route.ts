@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const session = getSession(sessionId);
+    const session = await getSession(sessionId);
     if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
@@ -25,13 +25,13 @@ export async function POST(request: NextRequest) {
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
       const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-      filePath = path.join(uploadsDir, safeName);
+      const fullPath = path.join(uploadsDir, safeName);
       const buffer = Buffer.from(fileData, 'base64');
-      fs.writeFileSync(filePath, buffer);
+      fs.writeFileSync(fullPath, buffer);
       filePath = `uploads/${sessionId}/${safeName}`;
     }
 
-    saveResponse(
+    await saveResponse(
       sessionId,
       stage,
       questionKey,

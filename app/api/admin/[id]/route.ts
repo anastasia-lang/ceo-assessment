@@ -12,17 +12,15 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const session = getSession(params.id);
+  const session = await getSession(params.id);
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
 
-  const finalResponses = getFinalResponses(params.id);
-  const latestResponses = getLatestResponses(params.id);
+  const [finalResponses, latestResponses] = await Promise.all([
+    getFinalResponses(params.id),
+    getLatestResponses(params.id),
+  ]);
 
-  return NextResponse.json({
-    session,
-    finalResponses,
-    latestResponses,
-  });
+  return NextResponse.json({ session, finalResponses, latestResponses });
 }
