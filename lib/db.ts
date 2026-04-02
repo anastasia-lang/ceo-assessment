@@ -92,6 +92,18 @@ export async function getDb(): Promise<Database> {
       is_final_submission INTEGER DEFAULT 0,
       FOREIGN KEY (session_id) REFERENCES sessions(id)
     );
+
+    CREATE TABLE IF NOT EXISTS evaluations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL UNIQUE,
+      scores_json TEXT NOT NULL,
+      weighted_total REAL NOT NULL,
+      stage_narratives_json TEXT NOT NULL,
+      hiring_memo_json TEXT NOT NULL,
+      model_used TEXT NOT NULL,
+      evaluated_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id)
+    );
   `);
 
   persist(dbInstance);

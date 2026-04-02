@@ -67,6 +67,19 @@ export async function POST(request: NextRequest) {
 
     await updateSession(sessionId, updates);
 
+    // Auto-trigger AI evaluation when assessment is completed
+    if (stage >= stages.length) {
+      try {
+        import('@/lib/evaluator').then(({ evaluateCandidate }) => {
+          evaluateCandidate(sessionId).catch(err =>
+            console.error('Evaluation failed for session:', sessionId, err)
+          );
+        });
+      } catch (err) {
+        console.error('Failed to start evaluation:', err);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       nextStage: stage < stages.length ? stage + 1 : null,

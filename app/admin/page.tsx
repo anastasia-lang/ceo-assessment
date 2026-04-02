@@ -18,17 +18,39 @@ interface Session {
   stage3_submitted_at: string | null;
 }
 
+interface EvalData {
+  weighted_total: number;
+  hiring_memo: { recommendation: string };
+}
+
 function calcTime(start: string | null, end: string | null): string {
   if (!start || !end) return '—';
   const ms = new Date(end).getTime() - new Date(start).getTime();
   return `${Math.floor(ms / 60000)}m`;
 }
 
+function scoreColor(score: number): string {
+  if (score >= 70) return 'bg-emerald-100 text-emerald-700';
+  if (score >= 50) return 'bg-amber-100 text-amber-700';
+  return 'bg-red-100 text-red-700';
+}
+
+function recColor(rec: string): string {
+  if (rec === 'STRONG YES') return 'bg-emerald-100 text-emerald-700';
+  if (rec === 'YES') return 'bg-green-100 text-green-700';
+  if (rec === 'MAYBE') return 'bg-amber-100 text-amber-700';
+  if (rec === 'LEAN NO') return 'bg-orange-100 text-orange-700';
+  if (rec === 'NO') return 'bg-red-100 text-red-700';
+  return 'bg-gray-100 text-gray-600';
+}
+
 export default function AdminPage() {
   const [password, setPassword] = useState('');
   const [authed, setAuthed] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [evals, setEvals] = useState<Record<string, EvalData | null>>({});
   const [error, setError] = useState('');
+  const [sortByScore, setSortByScore] = useState(false);
 
   const fetchSessions = useCallback(async (pw: string) => {
     const res = await fetch(`/api/admin/sessions?password=${encodeURIComponent(pw)}`);
@@ -41,6 +63,22 @@ export default function AdminPage() {
     setSessions(data);
     setAuthed(true);
     setError('');
+
+    // Fetch evaluations for completed sessions
+    for (const s of data) {
+      if (s.status === 'completed') {
+        fetch(`/api/evaluate/${s.id}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (d?.evaluation) {
+              setEvals(prev => ({ ...prev, [s.id]: d.evaluation }));
+            } else {
+              setEvals(prev => ({ ...prev, [s.id]: null }));
+            }
+          })
+          .catch(() => setEvals(prev => ({ ...prev, [s.id]: null })));
+      }
+    }
   }, []);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -61,6 +99,13 @@ export default function AdminPage() {
       sessionStorage.setItem('adminPw', password);
     }
   }, [authed, password]);
+
+  const sortedSessions = [...sessions].sort((a, b) => {
+    if (!sortByScore) return 0;
+    const scoreA = evals[a.id]?.weighted_total ?? -1;
+    const scoreB = evals[b.id]?.weighted_total ?? -1;
+    return scoreB - scoreA;
+  });
 
   if (!authed) {
     return (
@@ -101,7 +146,7 @@ export default function AdminPage() {
         </a>
       </div>
 
-      <div className="max-w-6xl mx-auto p-6">
+      <div className="max-w-7xl mx-auto p-6">
         <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -113,43 +158,93 @@ export default function AdminPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Stage 2</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Stage 3</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
+                <th
+                  className="text-left px-4 py-3 font-medium text-gray-600 cursor-pointer hover:text-gray-900"
+                  onClick={() => setSortByScore(!sortByScore)}
+                >
+                  Score {sortByScore ? '▼' : '↕'}
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Recommendation</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Eval</th>
               </tr>
             </thead>
             <tbody>
-              {sessions.length === 0 && (
+              {sortedSessions.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center py-8 text-gray-400">No submissions yet</td>
+                  <td colSpan={10} className="text-center py-8 text-gray-400">No submissions yet</td>
                 </tr>
               )}
-              {sessions.map(s => (
-                <tr key={s.id} className="border-b hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/admin/${s.id}?password=${encodeURIComponent(password)}`}
-                      className="text-[#e94560] hover:underline font-medium"
-                    >
-                      {s.candidate_name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{s.candidate_email}</td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {new Date(s.started_at).toLocaleDateString()}{' '}
-                    {new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{calcTime(s.stage1_started_at, s.stage1_submitted_at)}</td>
-                  <td className="px-4 py-3 text-gray-600">{calcTime(s.stage2_started_at, s.stage2_submitted_at)}</td>
-                  <td className="px-4 py-3 text-gray-600">{calcTime(s.stage3_started_at, s.stage3_submitted_at)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${
-                      s.status === 'completed'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {s.status === 'completed' ? 'Completed' : `Stage ${s.current_stage}`}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {sortedSessions.map(s => {
+                const ev = evals[s.id];
+                const evalStatus = s.status !== 'completed'
+                  ? ''
+                  : ev === undefined
+                    ? 'loading'
+                    : ev === null
+                      ? 'none'
+                      : 'done';
+
+                return (
+                  <tr key={s.id} className="border-b hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/admin/${s.id}?password=${encodeURIComponent(password)}`}
+                        className="text-[#e94560] hover:underline font-medium"
+                      >
+                        {s.candidate_name}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{s.candidate_email}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {new Date(s.started_at).toLocaleDateString()}{' '}
+                      {new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{calcTime(s.stage1_started_at, s.stage1_submitted_at)}</td>
+                    <td className="px-4 py-3 text-gray-600">{calcTime(s.stage2_started_at, s.stage2_submitted_at)}</td>
+                    <td className="px-4 py-3 text-gray-600">{calcTime(s.stage3_started_at, s.stage3_submitted_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                        s.status === 'completed'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {s.status === 'completed' ? 'Completed' : `Stage ${s.current_stage}`}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {ev && ev.weighted_total > 0 ? (
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${scoreColor(ev.weighted_total)}`}>
+                          {ev.weighted_total.toFixed(1)}
+                        </span>
+                      ) : evalStatus === 'loading' ? (
+                        <span className="text-xs text-gray-400">...</span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {ev?.hiring_memo?.recommendation ? (
+                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${recColor(ev.hiring_memo.recommendation)}`}>
+                          {ev.hiring_memo.recommendation}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {evalStatus === 'done' && (
+                        <span className="text-emerald-600 text-xs">Evaluated ✓</span>
+                      )}
+                      {evalStatus === 'loading' && (
+                        <span className="text-amber-500 text-xs">Pending... ⏳</span>
+                      )}
+                      {evalStatus === 'none' && (
+                        <span className="text-gray-400 text-xs">No eval</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
