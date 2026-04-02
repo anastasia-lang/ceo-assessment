@@ -9,7 +9,7 @@ interface FileUploadProps {
   onUpload?: (fileName: string) => void;
 }
 
-const ALLOWED = ['.xlsx', '.csv', '.pdf', '.docx'];
+const ALLOWED = ['.xlsx', '.csv', '.pdf', '.docx', '.pptx'];
 
 export default function FileUpload({ sessionId, stage, questionKey, onUpload }: FileUploadProps) {
   const [fileName, setFileName] = useState<string | null>(null);

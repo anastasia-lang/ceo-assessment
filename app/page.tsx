@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { companyContext, stages } from '@/lib/content';
+import { CompanyFactSheetCard } from '@/components/CompanyFactSheet';
 
 export default function LandingPage() {
   const [name, setName] = useState('');
@@ -76,7 +77,15 @@ export default function LandingPage() {
               ))}
             </div>
             <div className="text-center mt-3 text-sm text-white/50">
-              Total time: {totalTime} minutes ({totalTime / 60} hours)
+              Total time: {totalTime} minutes ({Math.floor(totalTime / 60)}h {totalTime % 60}m)
+            </div>
+          </div>
+
+          <div className="mb-8">
+            <h3 className="text-white font-semibold mb-1">Company Context</h3>
+            <p className="text-white/50 text-xs mb-4">Review this before starting — you&apos;ll need it during the assessment.</p>
+            <div className="bg-white/5 rounded-lg border border-white/10 p-4">
+              <CompanyFactSheetCard />
             </div>
           </div>
 

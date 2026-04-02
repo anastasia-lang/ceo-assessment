@@ -3,9 +3,9 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
+      "runtimeExecutable": "/opt/homebrew/bin/npx",
+      "runtimeArgs": ["next", "dev", "--port", "3001"],
+      "port": 3001
     }
   ]
 }

@@ -11,10 +11,47 @@ export const companyContext = {
   assessmentDescription: `This assessment simulates a real day in the CEO Office. You'll face operational triage, strategic analysis, and an AI-assisted execution task. There are no trick questions — we're looking for how you think, prioritize, and communicate.`,
 };
 
+export const companyFactSheet = {
+  overview: {
+    founded: "2019, São Paulo, Brazil",
+    ceo: "Marco Ferretti",
+    employees: "~350 (Engineering 40%, Commercial 30%, Operations 20%, G&A 10%)",
+    funding: "Series C — $80M raised to date (last round: $45M in Q1 2025)",
+    investors: "Andreessen Horowitz, SoftBank Latin America Fund, Kaszek Ventures",
+  },
+  financials: [
+    { metric: "ARR", value: "$28M (up from $18M prior year — 56% YoY growth)" },
+    { metric: "Gross Margin", value: "68%" },
+    { metric: "Net Revenue Retention", value: "125%" },
+    { metric: "Monthly Burn Rate", value: "~$2.2M" },
+    { metric: "Cash Position", value: "~$38M (approximately 17 months of runway at current burn)" },
+    { metric: "Path to Profitability", value: "Targeting breakeven by Q2 2027" },
+  ],
+  businessMetrics: [
+    { metric: "Active Merchants", value: "1,200+" },
+    { metric: "Transactions Processed (monthly)", value: "45M+" },
+    { metric: "Payment Methods Connected", value: "300+" },
+    { metric: "Markets Live", value: "8 countries (Brazil, Mexico, Colombia, Chile, Argentina, Peru, Ecuador, Panama)" },
+    { metric: "Average Deal Size (new enterprise)", value: "$180K ARR" },
+    { metric: "Sales Cycle (enterprise)", value: "3-5 months" },
+  ],
+  product: {
+    core: "Payment orchestration platform — single API integration connecting merchants to 300+ payment methods, acquirers, and PSPs across Latin America",
+    keyFeatures: "Smart routing (optimizes authorization rates), real-time analytics dashboard, fraud prevention module (launching Q3), multi-acquirer failover",
+    techStack: "Cloud-native, AWS-hosted, 99.97% uptime SLA",
+  },
+  competitive: {
+    primaryCompetitors: "dLocal, Kushki, EBANX, Mercado Pago",
+    keyDifferentiator: "True orchestration layer (not an acquirer) — sits above the payment stack",
+    winRate: "~45% on enterprise deals",
+    mainLossReasons: "Onboarding speed (32%), pricing (28%), geographic coverage (22%)",
+  },
+};
+
 export const stages = [
-  { number: 1, title: "Operational Triage", timeMinutes: 30 },
-  { number: 2, title: "Strategic Business Case", timeMinutes: 50 },
-  { number: 3, title: "AI-Powered Execution", timeMinutes: 40 },
+  { number: 1, title: "Operational Triage", timeMinutes: 15 },
+  { number: 2, title: "Strategic Business Case", timeMinutes: 35 },
+  { number: 3, title: "AI-Powered Execution", timeMinutes: 25 },
 ];
 
 export const stage1Items = [

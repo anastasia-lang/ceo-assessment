@@ -1,12 +1,16 @@
 'use client';
 
 import { Suspense, useState, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import AssessmentShell from '@/components/AssessmentShell';
 import SlackMessage from '@/components/SlackMessage';
 import RichTextEditor from '@/components/RichTextEditor';
+import FileUpload from '@/components/FileUpload';
 import { stage3Brief, stage3Competitors, stage3Differentiators, stage3Questions } from '@/lib/content';
 
 function Stage3Inner() {
+  const searchParams = useSearchParams();
+  const sessionId = searchParams.get('sessionId') || '';
   const [boardBriefing, setBoardBriefing] = useState('');
   const [aiReflection, setAiReflection] = useState('');
   const [expandedComp, setExpandedComp] = useState<string | null>(null);
@@ -110,6 +114,22 @@ function Stage3Inner() {
             minHeight="500px"
             placeholder="Write your board-ready competitive positioning briefing here..."
           />
+
+          <div className="mt-4">
+            <div className="flex items-center gap-3 my-3">
+              <div className="flex-1 border-t border-gray-200" />
+              <span className="text-xs text-gray-400 font-medium">OR upload your briefing as a document</span>
+              <div className="flex-1 border-t border-gray-200" />
+            </div>
+            <FileUpload
+              sessionId={sessionId}
+              stage={3}
+              questionKey="board_briefing"
+            />
+            <p className="text-xs text-gray-400 mt-2 text-center">
+              Supported formats: PDF, DOCX, XLSX, CSV (max 10MB). If uploaded, the file will be treated as the primary deliverable.
+            </p>
+          </div>
         </div>
 
         {/* AI Reflection */}
