@@ -51,7 +51,16 @@ export interface EvaluationResult {
 
 async function extractFileContent(filePath: string): Promise<string | null> {
   const fullPath = path.join(process.cwd(), 'data', filePath);
-  if (!fs.existsSync(fullPath)) return null;
+  console.log(`[extractFileContent] Attempting to extract: ${filePath}`);
+  console.log(`[extractFileContent] Resolved full path: ${fullPath}`);
+
+  if (!fs.existsSync(fullPath)) {
+    console.error(`[extractFileContent] File NOT found at: ${fullPath}`);
+    return `[File referenced but not found on disk: ${path.basename(fullPath)}]`;
+  }
+
+  const stat = fs.statSync(fullPath);
+  console.log(`[extractFileContent] File exists, size: ${stat.size} bytes`);
 
   const ext = path.extname(fullPath).toLowerCase();
   try {
@@ -60,14 +69,16 @@ async function extractFileContent(filePath: string): Promise<string | null> {
       const pdfParse = require('pdf-parse');
       const buffer = fs.readFileSync(fullPath);
       const data = await pdfParse(buffer);
+      console.log(`[extractFileContent] PDF extracted, ${data.text.length} chars`);
       return data.text;
     }
     if (ext === '.docx') {
       const mammoth = await import('mammoth');
       const result = await mammoth.extractRawText({ path: fullPath });
+      console.log(`[extractFileContent] DOCX extracted, ${result.value.length} chars`);
       return result.value;
     }
-    if (ext === '.xlsx') {
+    if (ext === '.xlsx' || ext === '.xls') {
       const XLSX = await import('xlsx');
       const workbook = XLSX.readFile(fullPath);
       const sheets: string[] = [];
@@ -75,19 +86,24 @@ async function extractFileContent(filePath: string): Promise<string | null> {
         const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
         sheets.push(`[Sheet: ${name}]\n${csv}`);
       }
-      return sheets.join('\n\n');
+      const result = sheets.join('\n\n');
+      console.log(`[extractFileContent] XLSX extracted, ${workbook.SheetNames.length} sheets, ${result.length} chars`);
+      return result;
     }
     if (ext === '.csv') {
-      return fs.readFileSync(fullPath, 'utf-8');
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      console.log(`[extractFileContent] CSV read, ${content.length} chars`);
+      return content;
     }
     if (ext === '.pptx') {
       return `[PPTX file uploaded: ${path.basename(fullPath)} — text extraction not supported for this format]`;
     }
+    console.warn(`[extractFileContent] Unsupported file extension: ${ext}`);
+    return `[File uploaded: ${path.basename(fullPath)} — unsupported format (${ext})]`;
   } catch (err) {
-    console.error(`Failed to extract content from ${filePath}:`, err);
-    return `[File uploaded: ${path.basename(fullPath)} — extraction failed]`;
+    console.error(`[extractFileContent] FAILED to extract ${filePath}:`, err);
+    return `[File uploaded: ${path.basename(fullPath)} — extraction failed: ${err instanceof Error ? err.message : String(err)}]`;
   }
-  return null;
 }
 
 function buildEvaluationPrompt(responses: Record<string, unknown>[], fileContents: Record<string, string>): string {
