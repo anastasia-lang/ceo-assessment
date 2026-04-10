@@ -65,8 +65,11 @@ async function extractFileContent(filePath: string): Promise<string | null> {
   const ext = path.extname(fullPath).toLowerCase();
   try {
     if (ext === '.pdf') {
+      // Import the core pdf-parse lib directly to avoid the index.js wrapper
+      // which has a test-file auto-loading bug (tries to read ./test/data/05-versions-space.pdf
+      // when module.parent is falsy, which happens in Next.js bundled environments).
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const pdfParse = require('pdf-parse');
+      const pdfParse = require('pdf-parse/lib/pdf-parse.js');
       const buffer = fs.readFileSync(fullPath);
       const data = await pdfParse(buffer);
       console.log(`[extractFileContent] PDF extracted, ${data.text.length} chars`);
@@ -74,13 +77,17 @@ async function extractFileContent(filePath: string): Promise<string | null> {
     }
     if (ext === '.docx') {
       const mammoth = await import('mammoth');
-      const result = await mammoth.extractRawText({ path: fullPath });
+      const buffer = fs.readFileSync(fullPath);
+      const result = await mammoth.extractRawText({ buffer });
       console.log(`[extractFileContent] DOCX extracted, ${result.value.length} chars`);
       return result.value;
     }
     if (ext === '.xlsx' || ext === '.xls') {
       const XLSX = await import('xlsx');
-      const workbook = XLSX.readFile(fullPath);
+      // Use XLSX.read(buffer) instead of XLSX.readFile(path) to avoid
+      // file access issues in containerized environments
+      const buffer = fs.readFileSync(fullPath);
+      const workbook = XLSX.read(buffer, { type: 'buffer' });
       const sheets: string[] = [];
       for (const name of workbook.SheetNames) {
         const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
