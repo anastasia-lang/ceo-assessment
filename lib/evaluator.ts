@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import fs from 'fs';
+import path from 'path';
 import { getDb } from './db';
 import {
   companyContext,
@@ -47,7 +49,48 @@ export interface EvaluationResult {
   };
 }
 
-function buildEvaluationPrompt(responses: Record<string, unknown>[]): string {
+async function extractFileContent(filePath: string): Promise<string | null> {
+  const fullPath = path.join(process.cwd(), 'data', filePath);
+  if (!fs.existsSync(fullPath)) return null;
+
+  const ext = path.extname(fullPath).toLowerCase();
+  try {
+    if (ext === '.pdf') {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const pdfParse = require('pdf-parse');
+      const buffer = fs.readFileSync(fullPath);
+      const data = await pdfParse(buffer);
+      return data.text;
+    }
+    if (ext === '.docx') {
+      const mammoth = await import('mammoth');
+      const result = await mammoth.extractRawText({ path: fullPath });
+      return result.value;
+    }
+    if (ext === '.xlsx') {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.readFile(fullPath);
+      const sheets: string[] = [];
+      for (const name of workbook.SheetNames) {
+        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[name]);
+        sheets.push(`[Sheet: ${name}]\n${csv}`);
+      }
+      return sheets.join('\n\n');
+    }
+    if (ext === '.csv') {
+      return fs.readFileSync(fullPath, 'utf-8');
+    }
+    if (ext === '.pptx') {
+      return `[PPTX file uploaded: ${path.basename(fullPath)} — text extraction not supported for this format]`;
+    }
+  } catch (err) {
+    console.error(`Failed to extract content from ${filePath}:`, err);
+    return `[File uploaded: ${path.basename(fullPath)} — extraction failed]`;
+  }
+  return null;
+}
+
+function buildEvaluationPrompt(responses: Record<string, unknown>[], fileContents: Record<string, string>): string {
   const responsesByStage: Record<number, Record<string, unknown>[]> = { 1: [], 2: [], 3: [] };
   for (const r of responses) {
     const stage = r.stage as number;
@@ -112,6 +155,7 @@ ${stage1Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
 
   for (const r of responsesByStage[1]) {
     const key = r.question_key as string;
+    if (key.endsWith('_file')) continue; // file content appended to parent key
     prompt += `\n**${key}:**\n`;
     if (r.response_json) {
       prompt += `${r.response_json}\n`;
@@ -121,6 +165,9 @@ ${stage1Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
     }
     if (!r.response_text && !r.response_json) {
       prompt += `[No response provided]\n`;
+    }
+    if (fileContents[`1_${key}`]) {
+      prompt += `\n[UPLOADED FILE]\n${fileContents[`1_${key}`]}\n`;
     }
   }
 
@@ -147,6 +194,7 @@ ${stage2Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
 
   for (const r of responsesByStage[2]) {
     const key = r.question_key as string;
+    if (key.endsWith('_file')) continue;
     prompt += `\n**${key}:**\n`;
     if (r.response_text) {
       prompt += `${r.response_text}\n`;
@@ -156,6 +204,9 @@ ${stage2Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
     }
     if (!r.response_text && !r.response_json) {
       prompt += `[No response provided]\n`;
+    }
+    if (fileContents[`2_${key}`]) {
+      prompt += `\n[UPLOADED FILE]\n${fileContents[`2_${key}`]}\n`;
     }
   }
 
@@ -176,6 +227,7 @@ ${stage3Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
 
   for (const r of responsesByStage[3]) {
     const key = r.question_key as string;
+    if (key.endsWith('_file')) continue;
     prompt += `\n**${key}:**\n`;
     if (r.response_text) {
       prompt += `${r.response_text}\n`;
@@ -185,6 +237,9 @@ ${stage3Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
     }
     if (!r.response_text && !r.response_json) {
       prompt += `[No response provided]\n`;
+    }
+    if (fileContents[`3_${key}`]) {
+      prompt += `\n[UPLOADED FILE]\n${fileContents[`3_${key}`]}\n`;
     }
   }
 
@@ -292,11 +347,55 @@ export async function evaluateCandidate(sessionId: string): Promise<EvaluationRe
     latestStmt.free();
   }
 
+  // Always merge in _file responses from latest that may not be marked final.
+  // File uploads are saved via /api/save with is_final=0 and may never get
+  // promoted to final if the stage was already submitted. Merge them in so
+  // the evaluator always sees uploaded files.
+  const existingKeys = new Set(responses.map(r => `${r.stage}_${r.question_key}`));
+  const fileStmt = db.prepare(
+    `SELECT r1.* FROM responses r1
+     INNER JOIN (
+       SELECT session_id, stage, question_key, MAX(saved_at) as max_saved
+       FROM responses
+       WHERE session_id = ? AND question_key LIKE '%_file' AND file_path IS NOT NULL
+       GROUP BY session_id, stage, question_key
+     ) r2 ON r1.session_id = r2.session_id
+       AND r1.stage = r2.stage
+       AND r1.question_key = r2.question_key
+       AND r1.saved_at = r2.max_saved
+     ORDER BY r1.stage, r1.question_key`
+  );
+  fileStmt.bind([sessionId]);
+  while (fileStmt.step()) {
+    const row = { ...fileStmt.getAsObject() } as Record<string, unknown>;
+    const compositeKey = `${row.stage}_${row.question_key}`;
+    if (!existingKeys.has(compositeKey)) {
+      responses.push(row);
+      existingKeys.add(compositeKey);
+    }
+  }
+  fileStmt.free();
+
   if (responses.length === 0) {
     throw new Error('No responses found for session: ' + sessionId);
   }
 
-  const prompt = buildEvaluationPrompt(responses);
+  // Extract content from uploaded files
+  const fileContents: Record<string, string> = {};
+  for (const r of responses) {
+    const key = r.question_key as string;
+    const filePath = r.file_path as string | null;
+    const stage = r.stage as number;
+    if (key.endsWith('_file') && filePath) {
+      const parentKey = key.replace(/_file$/, '');
+      const content = await extractFileContent(filePath);
+      if (content) {
+        fileContents[`${stage}_${parentKey}`] = content;
+      }
+    }
+  }
+
+  const prompt = buildEvaluationPrompt(responses, fileContents);
 
   const client = new Anthropic({ apiKey });
   const message = await client.messages.create({

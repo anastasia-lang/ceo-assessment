@@ -48,12 +48,16 @@ interface EvaluationData {
   };
 }
 
-function calcTime(start: string | null, end: string | null): string {
-  if (!start || !end) return '—';
-  const ms = new Date(end).getTime() - new Date(start).getTime();
+function formatMs(ms: number): string {
   const m = Math.floor(ms / 60000);
   const s = Math.floor((ms % 60000) / 1000);
   return `${m}m ${s}s`;
+}
+
+function calcTime(start: string | null, end: string | null): string {
+  if (!start || !end) return '—';
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  return formatMs(ms);
 }
 
 const questionLabels: Record<string, string> = {
@@ -64,8 +68,10 @@ const questionLabels: Record<string, string> = {
   ceo_memo: 'CEO Escalation Memo',
   strategic_recommendation: 'Strategic Recommendation',
   financial_sketch: 'Financial Sketch',
+  financial_sketch_file: 'Financial Sketch — Uploaded File',
   stakeholder_alignment: 'Stakeholder Alignment Plan',
   board_briefing: 'Board Briefing',
+  board_briefing_file: 'Board Briefing — Uploaded File',
   ai_reflection: 'AI Reflection',
 };
 
@@ -116,6 +122,7 @@ export default function CandidateDetailPage() {
   const password = searchParams.get('password') || '';
   const [session, setSession] = useState<SessionData | null>(null);
   const [responses, setResponses] = useState<ResponseData[]>([]);
+  const [activeTime, setActiveTime] = useState<Record<number, number>>({});
   const [evaluation, setEvaluation] = useState<EvaluationData | null>(null);
   const [evalLoading, setEvalLoading] = useState(false);
   const [evalError, setEvalError] = useState('');
@@ -129,9 +136,23 @@ export default function CandidateDetailPage() {
       })
       .then(data => {
         setSession(data.session);
+        if (data.activeTime) setActiveTime(data.activeTime);
         const finals = data.finalResponses as ResponseData[];
         const latest = data.latestResponses as ResponseData[];
-        setResponses(finals.length > 0 ? finals : latest);
+
+        // Start with final responses if any exist, otherwise latest
+        const base = finals.length > 0 ? finals : latest;
+
+        // Always merge in _file responses from latestResponses that aren't
+        // already present — these may still be is_final=0 but contain the
+        // candidate's uploaded files which must be visible to evaluators
+        const baseKeys = new Set(base.map(r => `${r.stage}_${r.question_key}`));
+        const fileResps = latest.filter(
+          r => r.question_key.endsWith('_file') &&
+               r.file_path &&
+               !baseKeys.has(`${r.stage}_${r.question_key}`)
+        );
+        setResponses([...base, ...fileResps]);
       })
       .catch(err => setError(err.message));
 
@@ -252,14 +273,14 @@ export default function CandidateDetailPage() {
               </p>
             </div>
             {stages.map(s => {
-              const startKey = `stage${s.number}_started_at` as keyof SessionData;
-              const endKey = `stage${s.number}_submitted_at` as keyof SessionData;
+              const active = activeTime[s.number];
               return (
                 <div key={s.number}>
                   <span className="text-xs text-gray-500">Stage {s.number}</span>
                   <p className="text-sm font-medium text-gray-800">
-                    {calcTime(session[startKey] as string | null, session[endKey] as string | null)}
+                    {active ? formatMs(active) : '—'}
                   </p>
+                  <span className="text-xs text-gray-400">active time</span>
                 </div>
               );
             })}

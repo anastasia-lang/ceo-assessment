@@ -180,6 +180,40 @@ export async function saveResponse(
   persist(db);
 }
 
+export async function markFileResponsesFinal(sessionId: string, _stage?: number): Promise<void> {
+  const db = await getDb();
+  // Find latest _file responses across ALL stages for this session and mark them as final.
+  // We ignore the _stage parameter and always sweep all stages so that earlier-stage
+  // file uploads (e.g. financial_sketch_file from stage 2) get marked final even when
+  // the candidate is submitting a later stage (e.g. stage 3).
+  const fileResponses = queryAll(
+    db,
+    `SELECT r1.id FROM responses r1
+     INNER JOIN (
+       SELECT session_id, stage, question_key, MAX(saved_at) as max_saved
+       FROM responses
+       WHERE session_id = ? AND question_key LIKE '%_file'
+       GROUP BY session_id, stage, question_key
+     ) r2 ON r1.session_id = r2.session_id
+       AND r1.stage = r2.stage
+       AND r1.question_key = r2.question_key
+       AND r1.saved_at = r2.max_saved
+     WHERE r1.is_final_submission = 0`,
+    [sessionId]
+  );
+
+  for (const r of fileResponses) {
+    db.run(
+      `UPDATE responses SET is_final_submission = 1 WHERE id = ?`,
+      [r.id as number]
+    );
+  }
+
+  if (fileResponses.length > 0) {
+    persist(db);
+  }
+}
+
 export async function getResponses(sessionId: string, stage?: number): Promise<Record<string, unknown>[]> {
   const db = await getDb();
   if (stage !== undefined) {
@@ -227,4 +261,63 @@ export async function getLatestResponses(sessionId: string): Promise<Record<stri
      ORDER BY r1.stage, r1.question_key`,
     [sessionId]
   );
+}
+
+/**
+ * Calculate active working time per stage for a session.
+ * Looks at all saved_at timestamps for a session+stage, sorts them,
+ * and sums gaps that are shorter than a threshold (default 5 minutes).
+ * This filters out time when the candidate closed the tab or walked away.
+ *
+ * Returns an object like { 1: 1580000, 2: 2340000, 3: 1920000 }
+ * where values are milliseconds of active working time.
+ */
+const ACTIVE_GAP_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+export async function getActiveTime(
+  sessionId: string
+): Promise<Record<number, number>> {
+  const db = await getDb();
+
+  // Get ALL saved_at timestamps for this session, grouped by stage
+  const rows = queryAll(
+    db,
+    `SELECT stage, saved_at FROM responses
+     WHERE session_id = ?
+     ORDER BY stage, saved_at ASC`,
+    [sessionId]
+  );
+
+  const byStage: Record<number, string[]> = {};
+  for (const r of rows) {
+    const stage = r.stage as number;
+    if (!byStage[stage]) byStage[stage] = [];
+    byStage[stage].push(r.saved_at as string);
+  }
+
+  const result: Record<number, number> = {};
+  for (const [stageStr, timestamps] of Object.entries(byStage)) {
+    const stage = Number(stageStr);
+    if (timestamps.length < 2) {
+      // With 0-1 timestamps we can't measure gaps; estimate a small amount
+      result[stage] = timestamps.length > 0 ? 30000 : 0; // 30s default
+      continue;
+    }
+
+    let activeMs = 0;
+    for (let i = 1; i < timestamps.length; i++) {
+      const gap = new Date(timestamps[i]).getTime() - new Date(timestamps[i - 1]).getTime();
+      if (gap > 0 && gap <= ACTIVE_GAP_THRESHOLD_MS) {
+        activeMs += gap;
+      }
+    }
+
+    // Add a small buffer — the first save happens after some working time
+    // and there's working time after the last auto-save before submission
+    activeMs += 30000; // +30s buffer
+
+    result[stage] = activeMs;
+  }
+
+  return result;
 }

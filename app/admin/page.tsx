@@ -16,6 +16,7 @@ interface Session {
   stage2_submitted_at: string | null;
   stage3_started_at: string | null;
   stage3_submitted_at: string | null;
+  activeTime?: Record<number, number>;
 }
 
 interface EvalData {
@@ -23,9 +24,8 @@ interface EvalData {
   hiring_memo: { recommendation: string };
 }
 
-function calcTime(start: string | null, end: string | null): string {
-  if (!start || !end) return '—';
-  const ms = new Date(end).getTime() - new Date(start).getTime();
+function formatActiveTime(ms: number | undefined): string {
+  if (!ms) return '—';
   return `${Math.floor(ms / 60000)}m`;
 }
 
@@ -199,9 +199,9 @@ export default function AdminPage() {
                       {new Date(s.started_at).toLocaleDateString()}{' '}
                       {new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{calcTime(s.stage1_started_at, s.stage1_submitted_at)}</td>
-                    <td className="px-4 py-3 text-gray-600">{calcTime(s.stage2_started_at, s.stage2_submitted_at)}</td>
-                    <td className="px-4 py-3 text-gray-600">{calcTime(s.stage3_started_at, s.stage3_submitted_at)}</td>
+                    <td className="px-4 py-3 text-gray-600">{formatActiveTime(s.activeTime?.[1])}</td>
+                    <td className="px-4 py-3 text-gray-600">{formatActiveTime(s.activeTime?.[2])}</td>
+                    <td className="px-4 py-3 text-gray-600">{formatActiveTime(s.activeTime?.[3])}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-medium px-2 py-1 rounded-full ${
                         s.status === 'completed'

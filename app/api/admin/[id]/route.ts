@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession, getLatestResponses, getFinalResponses } from '@/lib/db';
+import { getSession, getLatestResponses, getFinalResponses, getActiveTime } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
@@ -17,10 +17,11 @@ export async function GET(
     return NextResponse.json({ error: 'Session not found' }, { status: 404 });
   }
 
-  const [finalResponses, latestResponses] = await Promise.all([
+  const [finalResponses, latestResponses, activeTime] = await Promise.all([
     getFinalResponses(params.id),
     getLatestResponses(params.id),
+    getActiveTime(params.id),
   ]);
 
-  return NextResponse.json({ session, finalResponses, latestResponses });
+  return NextResponse.json({ session, finalResponses, latestResponses, activeTime });
 }

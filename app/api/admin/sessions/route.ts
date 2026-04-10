@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllSessions } from '@/lib/db';
+import { getAllSessions, getActiveTime } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   const password = request.nextUrl.searchParams.get('password');
@@ -10,5 +10,14 @@ export async function GET(request: NextRequest) {
   }
 
   const sessions = await getAllSessions();
-  return NextResponse.json(sessions);
+
+  // Calculate active time for each session
+  const sessionsWithActiveTime = await Promise.all(
+    sessions.map(async (s) => {
+      const activeTime = await getActiveTime(s.id as string);
+      return { ...s, activeTime };
+    })
+  );
+
+  return NextResponse.json(sessionsWithActiveTime);
 }

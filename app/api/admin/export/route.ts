@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     'Weighted Total', 'Recommendation',
     ...dimensionKeys.map(k => k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())),
     'Summary',
-    'Stage', 'Question Key', 'Response Text', 'Response JSON',
+    'Stage', 'Question Key', 'Response Text', 'Response JSON', 'File Path',
   ].map(h => `"${h}"`).join(','));
 
   const calcTime = (start: unknown, end: unknown) => {
@@ -48,6 +48,16 @@ export async function GET(request: NextRequest) {
     const sid = session.id as string;
     let responses = await getFinalResponses(sid);
     if (responses.length === 0) responses = await getLatestResponses(sid);
+
+    // Always merge in _file responses from latest that aren't already present
+    const latest = await getLatestResponses(sid);
+    const existingKeys = new Set(responses.map(r => `${r.stage}_${r.question_key}`));
+    const missingFiles = latest.filter(
+      r => (r.question_key as string).endsWith('_file') &&
+           r.file_path &&
+           !existingKeys.has(`${r.stage}_${r.question_key}`)
+    );
+    responses = [...responses, ...missingFiles];
 
     const ev = evalMap[sid];
     let scores: Record<string, { score: number }> = {};
@@ -79,7 +89,7 @@ export async function GET(request: NextRequest) {
         calcTime(session.stage2_started_at, session.stage2_submitted_at),
         calcTime(session.stage3_started_at, session.stage3_submitted_at),
         ...evalCols,
-        '', '', '', '',
+        '', '', '', '', '',
       ].map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
     } else {
       for (const resp of responses) {
@@ -89,7 +99,7 @@ export async function GET(request: NextRequest) {
           calcTime(session.stage2_started_at, session.stage2_submitted_at),
           calcTime(session.stage3_started_at, session.stage3_submitted_at),
           ...evalCols,
-          resp.stage, resp.question_key, resp.response_text || '', resp.response_json || '',
+          resp.stage, resp.question_key, resp.response_text || '', resp.response_json || '', resp.file_path || '',
         ].map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
       }
     }

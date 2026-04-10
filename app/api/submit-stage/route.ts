@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession, updateSession, saveResponse, getResponses } from '@/lib/db';
+import { getSession, updateSession, saveResponse, getResponses, markFileResponsesFinal } from '@/lib/db';
 import { stages } from '@/lib/content';
 
 export async function POST(request: NextRequest) {
@@ -52,6 +52,9 @@ export async function POST(request: NextRequest) {
         }
       }
     }
+
+    // Also mark any _file companion responses as final
+    await markFileResponsesFinal(sessionId, stage);
 
     const updates: Record<string, unknown> = {
       [`stage${stage}_submitted_at`]: now,
