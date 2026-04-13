@@ -60,49 +60,62 @@ export async function GET(request: NextRequest) {
 
     db.close();
 
-    // Insert sessions into Supabase
+    const only = request.nextUrl.searchParams.get('only');
+
+    // Insert sessions into Supabase (upsert = idempotent)
     let sessionsInserted = 0;
-    for (const s of sessions) {
-      const { error } = await supabase.from('sessions').upsert({
-        id: s.id,
-        candidate_name: s.candidate_name,
-        candidate_email: s.candidate_email,
-        status: s.status,
-        started_at: s.started_at,
-        stage1_started_at: s.stage1_started_at,
-        stage1_submitted_at: s.stage1_submitted_at,
-        stage2_started_at: s.stage2_started_at,
-        stage2_submitted_at: s.stage2_submitted_at,
-        stage3_started_at: s.stage3_started_at,
-        stage3_submitted_at: s.stage3_submitted_at,
-      }, { onConflict: 'id' });
-      if (error) {
-        return NextResponse.json({ error: `Session insert failed: ${error.message}`, session: s }, { status: 500 });
+    if (!only || only === 'sessions') {
+      for (const s of sessions) {
+        const { error } = await supabase.from('sessions').upsert({
+          id: s.id,
+          candidate_name: s.candidate_name,
+          candidate_email: s.candidate_email,
+          status: s.status,
+          started_at: s.started_at,
+          stage1_started_at: s.stage1_started_at,
+          stage1_submitted_at: s.stage1_submitted_at,
+          stage2_started_at: s.stage2_started_at,
+          stage2_submitted_at: s.stage2_submitted_at,
+          stage3_started_at: s.stage3_started_at,
+          stage3_submitted_at: s.stage3_submitted_at,
+        }, { onConflict: 'id' });
+        if (error) {
+          return NextResponse.json({ error: `Session insert failed: ${error.message}`, session: s }, { status: 500 });
+        }
+        sessionsInserted++;
       }
-      sessionsInserted++;
     }
 
-    // Insert responses into Supabase
+    // Insert responses into Supabase (skip if already migrated)
     let responsesInserted = 0;
-    for (const r of responses) {
-      const { error } = await supabase.from('responses').insert({
-        session_id: r.session_id,
-        stage: r.stage,
-        question_key: r.question_key,
-        response_text: r.response_text || null,
-        response_json: r.response_json || null,
-        file_path: r.file_path || null,
-        saved_at: r.saved_at,
-        is_final_submission: r.is_final_submission,
-      });
-      if (error) {
-        return NextResponse.json({ error: `Response insert failed: ${error.message}`, response: r }, { status: 500 });
+    if (!only || only === 'responses') {
+      // Check if responses already exist
+      const { data: existing } = await supabase.from('responses').select('id').limit(1);
+      if (existing && existing.length > 0) {
+        responsesInserted = -1; // skip, already migrated
+      } else {
+        for (const r of responses) {
+          const { error } = await supabase.from('responses').insert({
+            session_id: r.session_id,
+            stage: r.stage,
+            question_key: r.question_key,
+            response_text: r.response_text || null,
+            response_json: r.response_json || null,
+            file_path: r.file_path || null,
+            saved_at: r.saved_at,
+            is_final_submission: r.is_final_submission,
+          });
+          if (error) {
+            return NextResponse.json({ error: `Response insert failed: ${error.message}`, response: r }, { status: 500 });
+          }
+          responsesInserted++;
+        }
       }
-      responsesInserted++;
     }
 
-    // Insert evaluations into Supabase
+    // Insert evaluations into Supabase (upsert = idempotent)
     let evalsInserted = 0;
+    if (!only || only === 'evaluations') {
     for (const e of evaluations) {
       // Build evaluation record with all available fields
       const evalRecord: Record<string, unknown> = {
@@ -129,6 +142,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: `Evaluation insert failed: ${error.message}`, evaluation: e }, { status: 500 });
       }
       evalsInserted++;
+    }
     }
 
     return NextResponse.json({
