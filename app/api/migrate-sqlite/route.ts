@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const initSqlJs = (await import('sql.js')).default;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const initSqlJs = require('sql.js');
     const SQL = await initSqlJs({
       locateFile: (file: string) =>
         path.join(process.cwd(), 'node_modules/sql.js/dist', file),
