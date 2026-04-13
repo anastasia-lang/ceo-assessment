@@ -280,7 +280,7 @@ export default function CandidateDetailPage() {
                   <p className="text-sm font-medium text-gray-800">
                     {active ? formatMs(active) : '—'}
                   </p>
-                  <span className="text-xs text-gray-400">active time</span>
+                  <span className="text-xs text-gray-400">time spent</span>
                 </div>
               );
             })}

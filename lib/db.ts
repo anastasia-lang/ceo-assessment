@@ -264,59 +264,71 @@ export async function getLatestResponses(sessionId: string): Promise<Record<stri
 }
 
 /**
- * Calculate active working time per stage for a session.
- * Looks at all saved_at timestamps for a session+stage, sorts them,
- * and sums gaps that are shorter than a threshold (default 5 minutes).
- * This filters out time when the candidate closed the tab or walked away.
+ * Calculate working time per stage for a session.
  *
- * Returns an object like { 1: 1580000, 2: 2340000, 3: 1920000 }
- * where values are milliseconds of active working time.
+ * Primary method: use session-level timestamps (stageN_started_at → stageN_submitted_at).
+ * These are recorded when the candidate starts/submits each stage and give the most
+ * reliable wall-clock duration. This is what the candidate actually spent.
+ *
+ * Fallback: if session timestamps are missing, use the gap between the earliest and
+ * latest saved_at in the responses table for that stage, capped at 60 minutes.
+ *
+ * Returns an object like { 1: 900000, 2: 2100000, 3: 1440000 }
+ * where values are milliseconds.
  */
-const ACTIVE_GAP_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_STAGE_MS = 60 * 60 * 1000; // 60-minute cap for fallback
 
 export async function getActiveTime(
   sessionId: string
 ): Promise<Record<number, number>> {
   const db = await getDb();
 
-  // Get ALL saved_at timestamps for this session, grouped by stage
-  const rows = queryAll(
+  // Try session-level timestamps first (most reliable)
+  const sessionRows = queryAll(
     db,
-    `SELECT stage, saved_at FROM responses
-     WHERE session_id = ?
-     ORDER BY stage, saved_at ASC`,
+    `SELECT stage1_started_at, stage1_submitted_at,
+            stage2_started_at, stage2_submitted_at,
+            stage3_started_at, stage3_submitted_at
+     FROM sessions WHERE id = ?`,
     [sessionId]
   );
 
-  const byStage: Record<number, string[]> = {};
-  for (const r of rows) {
-    const stage = r.stage as number;
-    if (!byStage[stage]) byStage[stage] = [];
-    byStage[stage].push(r.saved_at as string);
-  }
-
   const result: Record<number, number> = {};
-  for (const [stageStr, timestamps] of Object.entries(byStage)) {
-    const stage = Number(stageStr);
-    if (timestamps.length < 2) {
-      // With 0-1 timestamps we can't measure gaps; estimate a small amount
-      result[stage] = timestamps.length > 0 ? 30000 : 0; // 30s default
-      continue;
-    }
 
-    let activeMs = 0;
-    for (let i = 1; i < timestamps.length; i++) {
-      const gap = new Date(timestamps[i]).getTime() - new Date(timestamps[i - 1]).getTime();
-      if (gap > 0 && gap <= ACTIVE_GAP_THRESHOLD_MS) {
-        activeMs += gap;
+  if (sessionRows.length > 0) {
+    const s = sessionRows[0];
+    for (let stage = 1; stage <= 3; stage++) {
+      const startKey = `stage${stage}_started_at`;
+      const endKey = `stage${stage}_submitted_at`;
+      const start = s[startKey] as string | null;
+      const end = s[endKey] as string | null;
+
+      if (start && end) {
+        const ms = new Date(end).getTime() - new Date(start).getTime();
+        if (ms > 0 && ms <= MAX_STAGE_MS) {
+          result[stage] = ms;
+          continue;
+        }
+        // If over cap, still use it but cap
+        if (ms > MAX_STAGE_MS) {
+          result[stage] = MAX_STAGE_MS;
+          continue;
+        }
+      }
+
+      // Fallback: use response timestamps for this stage
+      const rows = queryAll(
+        db,
+        `SELECT MIN(saved_at) as first_save, MAX(saved_at) as last_save
+         FROM responses WHERE session_id = ? AND stage = ?`,
+        [sessionId, stage]
+      );
+      if (rows.length > 0 && rows[0].first_save && rows[0].last_save) {
+        const ms = new Date(rows[0].last_save as string).getTime() -
+                   new Date(rows[0].first_save as string).getTime();
+        result[stage] = Math.min(Math.max(ms, 0), MAX_STAGE_MS);
       }
     }
-
-    // Add a small buffer — the first save happens after some working time
-    // and there's working time after the last auto-save before submission
-    activeMs += 30000; // +30s buffer
-
-    result[stage] = activeMs;
   }
 
   return result;
