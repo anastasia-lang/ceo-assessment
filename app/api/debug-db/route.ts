@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import path from 'path';
-import fs from 'fs';
+import { getDb } from '@/lib/db';
+
+function queryAll(db: import('sql.js').Database, sql: string, params: import('sql.js').BindParams = []): Record<string, unknown>[] {
+  const stmt = db.prepare(sql);
+  if (Array.isArray(params) && params.length) stmt.bind(params);
+  const rows: Record<string, unknown>[] = [];
+  while (stmt.step()) rows.push({ ...stmt.getAsObject() });
+  stmt.free();
+  return rows;
+}
 
 export async function GET(request: NextRequest) {
   const password = request.nextUrl.searchParams.get('password');
@@ -10,55 +18,52 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const cwd = process.cwd();
-  const dbDir = path.join(cwd, 'data');
-  const dbPath = path.join(dbDir, 'assessment.db');
+  const db = await getDb();
+  const sid = request.nextUrl.searchParams.get('sid');
 
-  const info: Record<string, unknown> = {
-    cwd,
-    dbDir,
-    dbPath,
-    dbDirExists: fs.existsSync(dbDir),
-    dbFileExists: fs.existsSync(dbPath),
-  };
+  if (sid) {
+    // Detailed view for a specific session
+    const session = queryAll(db, 'SELECT * FROM sessions WHERE id = ?', [sid]);
+    const responses = queryAll(
+      db,
+      `SELECT stage, question_key, saved_at, is_final_submission,
+              LENGTH(response_text) as text_len, file_path
+       FROM responses WHERE session_id = ?
+       ORDER BY stage, saved_at ASC`,
+      [sid]
+    );
 
-  if (fs.existsSync(dbPath)) {
-    const stat = fs.statSync(dbPath);
-    info.dbFileSize = stat.size;
-    info.dbFileModified = stat.mtime.toISOString();
-    info.dbFileCreated = stat.birthtime.toISOString();
-  }
-
-  // Check if /app/data exists (Railway volume mount point)
-  info.appDataExists = fs.existsSync('/app/data');
-  if (fs.existsSync('/app/data')) {
-    try {
-      info.appDataContents = fs.readdirSync('/app/data');
-    } catch (e) {
-      info.appDataError = String(e);
+    // Count per stage
+    const perStage: Record<number, { count: number; timestamps: string[]; keys: string[] }> = {};
+    for (const r of responses) {
+      const s = r.stage as number;
+      if (!perStage[s]) perStage[s] = { count: 0, timestamps: [], keys: [] };
+      perStage[s].count++;
+      perStage[s].timestamps.push(r.saved_at as string);
+      const key = r.question_key as string;
+      if (!perStage[s].keys.includes(key)) perStage[s].keys.push(key);
     }
+
+    return NextResponse.json({ session, perStage, totalResponses: responses.length, responses });
   }
 
-  // List data dir contents
-  if (fs.existsSync(dbDir)) {
-    try {
-      info.dataDirContents = fs.readdirSync(dbDir);
-    } catch (e) {
-      info.dataDirError = String(e);
-    }
+  // List all sessions with response counts per stage
+  const sessions = queryAll(db, 'SELECT id, candidate_name, status FROM sessions ORDER BY started_at DESC');
+  const summary = [];
+  for (const s of sessions) {
+    const counts = queryAll(
+      db,
+      `SELECT stage, COUNT(*) as cnt, MIN(saved_at) as first_save, MAX(saved_at) as last_save
+       FROM responses WHERE session_id = ? GROUP BY stage`,
+      [s.id as string]
+    );
+    summary.push({
+      id: s.id,
+      name: s.candidate_name,
+      status: s.status,
+      stages: counts,
+    });
   }
 
-  // Check environment hints
-  info.railwayVolumeMountPath = process.env.RAILWAY_VOLUME_MOUNT_PATH || 'not set';
-  info.railwayEnvironment = process.env.RAILWAY_ENVIRONMENT || 'not set';
-
-  // Check for any .db files anywhere in the app directory
-  try {
-    const appContents = fs.readdirSync(cwd);
-    info.cwdContents = appContents;
-  } catch (e) {
-    info.cwdError = String(e);
-  }
-
-  return NextResponse.json(info);
+  return NextResponse.json({ sessions: summary });
 }
