@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession, saveResponse } from '@/lib/db';
-import fs from 'fs';
-import path from 'path';
+import { getSupabase } from '@/lib/supabase';
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,15 +19,24 @@ export async function POST(request: NextRequest) {
     let filePath: string | null = null;
 
     if (fileData && fileName) {
-      const uploadsDir = path.join(process.cwd(), 'data', 'uploads', sessionId);
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
       const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const fullPath = path.join(uploadsDir, safeName);
+      const storagePath = `${sessionId}/${safeName}`;
       const buffer = Buffer.from(fileData, 'base64');
-      fs.writeFileSync(fullPath, buffer);
-      filePath = `uploads/${sessionId}/${safeName}`;
+
+      const supabase = getSupabase();
+      const { error: uploadError } = await supabase.storage
+        .from('uploads')
+        .upload(storagePath, buffer, {
+          upsert: true,
+          contentType: 'application/octet-stream',
+        });
+
+      if (uploadError) {
+        console.error('File upload error:', uploadError);
+        return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 });
+      }
+
+      filePath = storagePath;
     }
 
     await saveResponse(

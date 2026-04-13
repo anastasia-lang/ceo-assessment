@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllSessions, getFinalResponses, getLatestResponses, getDb } from '@/lib/db';
+import { getAllSessions, getFinalResponses, getLatestResponses, getAllEvaluations } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   const password = request.nextUrl.searchParams.get('password');
@@ -10,16 +10,7 @@ export async function GET(request: NextRequest) {
   }
 
   const sessions = await getAllSessions();
-  const db = await getDb();
-
-  // Load all evaluations
-  const evalMap: Record<string, Record<string, unknown>> = {};
-  const evalStmt = db.prepare('SELECT * FROM evaluations');
-  while (evalStmt.step()) {
-    const row = evalStmt.getAsObject() as Record<string, unknown>;
-    evalMap[row.session_id as string] = row;
-  }
-  evalStmt.free();
+  const evalMap = await getAllEvaluations();
 
   const dimensionKeys = [
     'pattern_recognition', 'prioritization', 'ceo_communication',
@@ -49,7 +40,7 @@ export async function GET(request: NextRequest) {
     let responses = await getFinalResponses(sid);
     if (responses.length === 0) responses = await getLatestResponses(sid);
 
-    // Always merge in _file responses from latest that aren't already present
+    // Merge in file responses
     const latest = await getLatestResponses(sid);
     const existingKeys = new Set(responses.map(r => `${r.stage}_${r.question_key}`));
     const missingFiles = latest.filter(

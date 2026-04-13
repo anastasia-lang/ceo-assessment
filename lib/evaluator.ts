@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
-import fs from 'fs';
 import path from 'path';
-import { getDb } from './db';
+import { getSupabase } from './supabase';
+import { getFinalResponses, getLatestResponses } from './db';
 import {
   companyContext,
   stages,
@@ -50,43 +50,36 @@ export interface EvaluationResult {
 }
 
 async function extractFileContent(filePath: string): Promise<string | null> {
-  const fullPath = path.join(process.cwd(), 'data', filePath);
   console.log(`[extractFileContent] Attempting to extract: ${filePath}`);
-  console.log(`[extractFileContent] Resolved full path: ${fullPath}`);
 
-  if (!fs.existsSync(fullPath)) {
-    console.error(`[extractFileContent] File NOT found at: ${fullPath}`);
-    return `[File referenced but not found on disk: ${path.basename(fullPath)}]`;
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage.from('uploads').download(filePath);
+
+  if (error || !data) {
+    console.error(`[extractFileContent] Download failed for ${filePath}:`, error);
+    return `[File referenced but not found in storage: ${path.basename(filePath)}]`;
   }
 
-  const stat = fs.statSync(fullPath);
-  console.log(`[extractFileContent] File exists, size: ${stat.size} bytes`);
+  const buffer = Buffer.from(await data.arrayBuffer());
+  console.log(`[extractFileContent] Downloaded, size: ${buffer.length} bytes`);
 
-  const ext = path.extname(fullPath).toLowerCase();
+  const ext = path.extname(filePath).toLowerCase();
   try {
     if (ext === '.pdf') {
-      // Import the core pdf-parse lib directly to avoid the index.js wrapper
-      // which has a test-file auto-loading bug (tries to read ./test/data/05-versions-space.pdf
-      // when module.parent is falsy, which happens in Next.js bundled environments).
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const pdfParse = require('pdf-parse/lib/pdf-parse.js');
-      const buffer = fs.readFileSync(fullPath);
-      const data = await pdfParse(buffer);
-      console.log(`[extractFileContent] PDF extracted, ${data.text.length} chars`);
-      return data.text;
+      const result = await pdfParse(buffer);
+      console.log(`[extractFileContent] PDF extracted, ${result.text.length} chars`);
+      return result.text;
     }
     if (ext === '.docx') {
       const mammoth = await import('mammoth');
-      const buffer = fs.readFileSync(fullPath);
       const result = await mammoth.extractRawText({ buffer });
       console.log(`[extractFileContent] DOCX extracted, ${result.value.length} chars`);
       return result.value;
     }
     if (ext === '.xlsx' || ext === '.xls') {
       const XLSX = await import('xlsx');
-      // Use XLSX.read(buffer) instead of XLSX.readFile(path) to avoid
-      // file access issues in containerized environments
-      const buffer = fs.readFileSync(fullPath);
       const workbook = XLSX.read(buffer, { type: 'buffer' });
       const sheets: string[] = [];
       for (const name of workbook.SheetNames) {
@@ -97,19 +90,19 @@ async function extractFileContent(filePath: string): Promise<string | null> {
       console.log(`[extractFileContent] XLSX extracted, ${workbook.SheetNames.length} sheets, ${result.length} chars`);
       return result;
     }
-    if (ext === '.csv') {
-      const content = fs.readFileSync(fullPath, 'utf-8');
-      console.log(`[extractFileContent] CSV read, ${content.length} chars`);
+    if (ext === '.csv' || ext === '.txt') {
+      const content = buffer.toString('utf-8');
+      console.log(`[extractFileContent] Text file read, ${content.length} chars`);
       return content;
     }
     if (ext === '.pptx') {
-      return `[PPTX file uploaded: ${path.basename(fullPath)} — text extraction not supported for this format]`;
+      return `[PPTX file uploaded: ${path.basename(filePath)} — text extraction not supported for this format]`;
     }
     console.warn(`[extractFileContent] Unsupported file extension: ${ext}`);
-    return `[File uploaded: ${path.basename(fullPath)} — unsupported format (${ext})]`;
+    return `[File uploaded: ${path.basename(filePath)} — unsupported format (${ext})]`;
   } catch (err) {
     console.error(`[extractFileContent] FAILED to extract ${filePath}:`, err);
-    return `[File uploaded: ${path.basename(fullPath)} — extraction failed: ${err instanceof Error ? err.message : String(err)}]`;
+    return `[File uploaded: ${path.basename(filePath)} — extraction failed: ${err instanceof Error ? err.message : String(err)}]`;
   }
 }
 
@@ -178,20 +171,12 @@ ${stage1Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
 
   for (const r of responsesByStage[1]) {
     const key = r.question_key as string;
-    if (key.endsWith('_file')) continue; // file content appended to parent key
+    if (key.endsWith('_file')) continue;
     prompt += `\n**${key}:**\n`;
-    if (r.response_json) {
-      prompt += `${r.response_json}\n`;
-    }
-    if (r.response_text) {
-      prompt += `${r.response_text}\n`;
-    }
-    if (!r.response_text && !r.response_json) {
-      prompt += `[No response provided]\n`;
-    }
-    if (fileContents[`1_${key}`]) {
-      prompt += `\n[UPLOADED FILE]\n${fileContents[`1_${key}`]}\n`;
-    }
+    if (r.response_json) prompt += `${r.response_json}\n`;
+    if (r.response_text) prompt += `${r.response_text}\n`;
+    if (!r.response_text && !r.response_json) prompt += `[No response provided]\n`;
+    if (fileContents[`1_${key}`]) prompt += `\n[UPLOADED FILE]\n${fileContents[`1_${key}`]}\n`;
   }
 
   prompt += `
@@ -219,18 +204,10 @@ ${stage2Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
     const key = r.question_key as string;
     if (key.endsWith('_file')) continue;
     prompt += `\n**${key}:**\n`;
-    if (r.response_text) {
-      prompt += `${r.response_text}\n`;
-    }
-    if (r.response_json) {
-      prompt += `${r.response_json}\n`;
-    }
-    if (!r.response_text && !r.response_json) {
-      prompt += `[No response provided]\n`;
-    }
-    if (fileContents[`2_${key}`]) {
-      prompt += `\n[UPLOADED FILE]\n${fileContents[`2_${key}`]}\n`;
-    }
+    if (r.response_text) prompt += `${r.response_text}\n`;
+    if (r.response_json) prompt += `${r.response_json}\n`;
+    if (!r.response_text && !r.response_json) prompt += `[No response provided]\n`;
+    if (fileContents[`2_${key}`]) prompt += `\n[UPLOADED FILE]\n${fileContents[`2_${key}`]}\n`;
   }
 
   prompt += `
@@ -252,18 +229,10 @@ ${stage3Questions.map(q => `- ${q.key}: ${q.description}`).join('\n')}
     const key = r.question_key as string;
     if (key.endsWith('_file')) continue;
     prompt += `\n**${key}:**\n`;
-    if (r.response_text) {
-      prompt += `${r.response_text}\n`;
-    }
-    if (r.response_json) {
-      prompt += `${r.response_json}\n`;
-    }
-    if (!r.response_text && !r.response_json) {
-      prompt += `[No response provided]\n`;
-    }
-    if (fileContents[`3_${key}`]) {
-      prompt += `\n[UPLOADED FILE]\n${fileContents[`3_${key}`]}\n`;
-    }
+    if (r.response_text) prompt += `${r.response_text}\n`;
+    if (r.response_json) prompt += `${r.response_json}\n`;
+    if (!r.response_text && !r.response_json) prompt += `[No response provided]\n`;
+    if (fileContents[`3_${key}`]) prompt += `\n[UPLOADED FILE]\n${fileContents[`3_${key}`]}\n`;
   }
 
   prompt += `
@@ -304,14 +273,6 @@ Return a JSON object with exactly this structure (no markdown, no code fences, j
   return prompt;
 }
 
-function persist(db: import('sql.js').Database): void {
-  const fs = require('fs');
-  const path = require('path');
-  const DB_PATH = path.join(process.cwd(), 'data', 'assessment.db');
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
-
 export async function evaluateCandidate(sessionId: string): Promise<EvaluationResult | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -319,16 +280,14 @@ export async function evaluateCandidate(sessionId: string): Promise<EvaluationRe
     return null;
   }
 
-  const db = await getDb();
+  const supabase = getSupabase();
 
   // Check for existing evaluation
-  const existingStmt = db.prepare('SELECT * FROM evaluations WHERE session_id = ?');
-  existingStmt.bind([sessionId]);
-  let existing: Record<string, unknown> | undefined;
-  if (existingStmt.step()) {
-    existing = existingStmt.getAsObject() as Record<string, unknown>;
-  }
-  existingStmt.free();
+  const { data: existing } = await supabase
+    .from('evaluations')
+    .select('*')
+    .eq('session_id', sessionId)
+    .single();
 
   if (existing) {
     return {
@@ -340,64 +299,22 @@ export async function evaluateCandidate(sessionId: string): Promise<EvaluationRe
   }
 
   // Get all final responses, fall back to latest
-  const finalStmt = db.prepare(
-    'SELECT * FROM responses WHERE session_id = ? AND is_final_submission = 1 ORDER BY stage, question_key'
-  );
-  finalStmt.bind([sessionId]);
-  const responses: Record<string, unknown>[] = [];
-  while (finalStmt.step()) {
-    responses.push({ ...finalStmt.getAsObject() });
-  }
-  finalStmt.free();
-
+  let responses = await getFinalResponses(sessionId);
   if (responses.length === 0) {
-    const latestStmt = db.prepare(
-      `SELECT r1.* FROM responses r1
-       INNER JOIN (
-         SELECT session_id, stage, question_key, MAX(saved_at) as max_saved
-         FROM responses WHERE session_id = ?
-         GROUP BY session_id, stage, question_key
-       ) r2 ON r1.session_id = r2.session_id
-         AND r1.stage = r2.stage
-         AND r1.question_key = r2.question_key
-         AND r1.saved_at = r2.max_saved
-       ORDER BY r1.stage, r1.question_key`
-    );
-    latestStmt.bind([sessionId]);
-    while (latestStmt.step()) {
-      responses.push({ ...latestStmt.getAsObject() });
-    }
-    latestStmt.free();
+    responses = await getLatestResponses(sessionId);
   }
 
-  // Always merge in _file responses from latest that may not be marked final.
-  // File uploads are saved via /api/save with is_final=0 and may never get
-  // promoted to final if the stage was already submitted. Merge them in so
-  // the evaluator always sees uploaded files.
+  // Merge in file responses that may not be marked final
   const existingKeys = new Set(responses.map(r => `${r.stage}_${r.question_key}`));
-  const fileStmt = db.prepare(
-    `SELECT r1.* FROM responses r1
-     INNER JOIN (
-       SELECT session_id, stage, question_key, MAX(saved_at) as max_saved
-       FROM responses
-       WHERE session_id = ? AND question_key LIKE '%_file' AND file_path IS NOT NULL
-       GROUP BY session_id, stage, question_key
-     ) r2 ON r1.session_id = r2.session_id
-       AND r1.stage = r2.stage
-       AND r1.question_key = r2.question_key
-       AND r1.saved_at = r2.max_saved
-     ORDER BY r1.stage, r1.question_key`
-  );
-  fileStmt.bind([sessionId]);
-  while (fileStmt.step()) {
-    const row = { ...fileStmt.getAsObject() } as Record<string, unknown>;
-    const compositeKey = `${row.stage}_${row.question_key}`;
-    if (!existingKeys.has(compositeKey)) {
-      responses.push(row);
+  const latest = await getLatestResponses(sessionId);
+  for (const r of latest) {
+    const key = r.question_key as string;
+    const compositeKey = `${r.stage}_${key}`;
+    if (key.endsWith('_file') && r.file_path && !existingKeys.has(compositeKey)) {
+      responses.push(r);
       existingKeys.add(compositeKey);
     }
   }
-  fileStmt.free();
 
   if (responses.length === 0) {
     throw new Error('No responses found for session: ' + sessionId);
@@ -436,67 +353,55 @@ export async function evaluateCandidate(sessionId: string): Promise<EvaluationRe
   try {
     evaluation = JSON.parse(rawText);
   } catch {
-    // Store raw response on parse failure
     const now = new Date().toISOString();
-    db.run(
-      `INSERT INTO evaluations (session_id, scores_json, weighted_total, stage_narratives_json, hiring_memo_json, model_used, evaluated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        sessionId,
-        JSON.stringify({ _raw: rawText, _error: 'JSON parse failed' }),
-        0,
-        JSON.stringify({}),
-        JSON.stringify({ recommendation: 'ERROR', summary: 'Evaluation produced invalid JSON. See raw output.' }),
-        'claude-sonnet-4-20250514',
-        now,
-      ]
-    );
-    persist(db);
+    await supabase.from('evaluations').insert({
+      session_id: sessionId,
+      scores_json: JSON.stringify({ _raw: rawText, _error: 'JSON parse failed' }),
+      weighted_total: 0,
+      stage_narratives_json: JSON.stringify({}),
+      hiring_memo_json: JSON.stringify({ recommendation: 'ERROR', summary: 'Evaluation produced invalid JSON. See raw output.' }),
+      model_used: 'claude-sonnet-4-20250514',
+      evaluated_at: now,
+    });
     throw new Error('Failed to parse evaluation JSON response');
   }
 
   // Store evaluation
   const now = new Date().toISOString();
-  db.run(
-    `INSERT INTO evaluations (session_id, scores_json, weighted_total, stage_narratives_json, hiring_memo_json, model_used, evaluated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      sessionId,
-      JSON.stringify(evaluation.scores),
-      evaluation.weighted_total,
-      JSON.stringify(evaluation.stage_narratives),
-      JSON.stringify(evaluation.hiring_memo),
-      'claude-sonnet-4-20250514',
-      now,
-    ]
-  );
-  persist(db);
+  await supabase.from('evaluations').insert({
+    session_id: sessionId,
+    scores_json: JSON.stringify(evaluation.scores),
+    weighted_total: evaluation.weighted_total,
+    stage_narratives_json: JSON.stringify(evaluation.stage_narratives),
+    hiring_memo_json: JSON.stringify(evaluation.hiring_memo),
+    model_used: 'claude-sonnet-4-20250514',
+    evaluated_at: now,
+  });
 
   return evaluation;
 }
 
 export async function getEvaluation(sessionId: string): Promise<EvaluationResult | null> {
-  const db = await getDb();
-  const stmt = db.prepare('SELECT * FROM evaluations WHERE session_id = ?');
-  stmt.bind([sessionId]);
-  let row: Record<string, unknown> | undefined;
-  if (stmt.step()) {
-    row = stmt.getAsObject() as Record<string, unknown>;
-  }
-  stmt.free();
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('evaluations')
+    .select('*')
+    .eq('session_id', sessionId)
+    .single();
 
-  if (!row) return null;
+  if (error && error.code === 'PGRST116') return null;
+  if (error) throw error;
+  if (!data) return null;
 
   return {
-    scores: JSON.parse(row.scores_json as string),
-    weighted_total: row.weighted_total as number,
-    stage_narratives: JSON.parse(row.stage_narratives_json as string),
-    hiring_memo: JSON.parse(row.hiring_memo_json as string),
+    scores: JSON.parse(data.scores_json as string),
+    weighted_total: data.weighted_total as number,
+    stage_narratives: JSON.parse(data.stage_narratives_json as string),
+    hiring_memo: JSON.parse(data.hiring_memo_json as string),
   };
 }
 
 export async function deleteEvaluation(sessionId: string): Promise<void> {
-  const db = await getDb();
-  db.run('DELETE FROM evaluations WHERE session_id = ?', [sessionId]);
-  persist(db);
+  const supabase = getSupabase();
+  await supabase.from('evaluations').delete().eq('session_id', sessionId);
 }

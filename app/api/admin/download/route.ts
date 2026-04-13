@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
+import { getSupabase } from '@/lib/supabase';
 import path from 'path';
 
 export async function GET(request: NextRequest) {
@@ -15,21 +15,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing file path' }, { status: 400 });
   }
 
-  const fullPath = path.join(process.cwd(), 'data', filePath);
-  const resolved = path.resolve(fullPath);
-  const dataDir = path.resolve(path.join(process.cwd(), 'data'));
+  // Strip leading "uploads/" if present (legacy paths stored as "uploads/sessionId/file")
+  const storagePath = filePath.replace(/^uploads\//, '');
 
-  // Prevent path traversal
-  if (!resolved.startsWith(dataDir)) {
-    return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
-  }
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage.from('uploads').download(storagePath);
 
-  if (!fs.existsSync(resolved)) {
+  if (error || !data) {
+    console.error('Download error:', error);
     return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
 
-  const buffer = fs.readFileSync(resolved);
-  const fileName = path.basename(resolved);
+  const buffer = Buffer.from(await data.arrayBuffer());
+  const fileName = path.basename(storagePath);
   const ext = path.extname(fileName).toLowerCase();
 
   const mimeTypes: Record<string, string> = {
@@ -38,6 +36,7 @@ export async function GET(request: NextRequest) {
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     '.csv': 'text/csv',
+    '.txt': 'text/plain',
   };
 
   return new NextResponse(buffer, {
