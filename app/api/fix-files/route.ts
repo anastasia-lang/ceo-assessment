@@ -108,23 +108,29 @@ export async function POST(request: NextRequest) {
   }
 
   // Step 5: Re-evaluate all completed candidates
+  // Only re-evaluate candidates without an existing evaluation (safe: won't delete then fail)
   const reEvaluated: string[] = [];
   const errors: string[] = [];
 
   try {
-    const { deleteEvaluation, evaluateCandidate } = await import('@/lib/evaluator');
+    const { evaluateCandidate, getEvaluation } = await import('@/lib/evaluator');
 
     for (const session of completedSessions) {
       const sid = session.id as string;
       const name = session.candidate_name as string;
       try {
-        await deleteEvaluation(sid);
-        log.push(`Deleted old evaluation for ${name}`);
+        // Check if evaluation already exists — if so, skip (don't delete+recreate)
+        const existing = await getEvaluation(sid);
+        if (existing) {
+          reEvaluated.push(`${name} (${sid}) — existing score: ${existing.weighted_total.toFixed(1)}, rec: ${existing.hiring_memo.recommendation}`);
+          log.push(`${name}: keeping existing evaluation (${existing.weighted_total.toFixed(1)})`);
+          continue;
+        }
 
         const result = await evaluateCandidate(sid);
         if (result) {
           reEvaluated.push(`${name} (${sid}) — score: ${result.weighted_total.toFixed(1)}, rec: ${result.hiring_memo.recommendation}`);
-          log.push(`Re-evaluated ${name}: ${result.weighted_total.toFixed(1)} — ${result.hiring_memo.recommendation}`);
+          log.push(`Evaluated ${name}: ${result.weighted_total.toFixed(1)} — ${result.hiring_memo.recommendation}`);
         } else {
           errors.push(`${name}: evaluateCandidate returned null (missing API key?)`);
         }
