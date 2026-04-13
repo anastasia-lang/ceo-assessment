@@ -104,7 +104,8 @@ export async function GET(request: NextRequest) {
     // Insert evaluations into Supabase
     let evalsInserted = 0;
     for (const e of evaluations) {
-      const { error } = await supabase.from('evaluations').upsert({
+      // Build evaluation record with all available fields
+      const evalRecord: Record<string, unknown> = {
         session_id: e.session_id,
         overall_score: e.overall_score,
         recommendation: e.recommendation,
@@ -117,7 +118,13 @@ export async function GET(request: NextRequest) {
         stage3_feedback: e.stage3_feedback,
         evaluated_at: e.evaluated_at,
         raw_evaluation: e.raw_evaluation,
-      }, { onConflict: 'session_id' });
+        scores_json: e.scores_json || '{}',
+        weighted_total: e.weighted_total,
+        stage_narratives_json: e.stage_narratives_json || '{}',
+        hiring_memo_json: e.hiring_memo_json || '{}',
+        model_used: e.model_used,
+      };
+      const { error } = await supabase.from('evaluations').upsert(evalRecord, { onConflict: 'session_id' });
       if (error) {
         return NextResponse.json({ error: `Evaluation insert failed: ${error.message}`, evaluation: e }, { status: 500 });
       }
